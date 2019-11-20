@@ -38,7 +38,7 @@
 #error ABSL_PER_THREAD_TLS cannot be directly set
 #elif defined(ABSL_PER_THREAD_TLS_KEYWORD)
 #error ABSL_PER_THREAD_TLS_KEYWORD cannot be directly set
-#elif defined(ABSL_HAVE_TLS)
+#elif defined(ABSL_HAVE_TLS) || defined(ESP8266)
 #define ABSL_PER_THREAD_TLS_KEYWORD __thread
 #define ABSL_PER_THREAD_TLS 1
 #elif defined(_MSC_VER)

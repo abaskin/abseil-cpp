@@ -24,7 +24,10 @@
 #include "absl/container/internal/have_sse.h"
 #include "absl/debugging/stacktrace.h"
 #include "absl/memory/memory.h"
-#include "absl/synchronization/mutex.h"
+#include "absl/time/clock.h"
+#include "absl/base/internal/raw_logging.h"
+// moved to hashtablez_sampler.h to support ESP8266
+// #include "absl/synchronization/mutex.h"
 
 namespace absl {
 inline namespace lts_2019_08_08 {
@@ -32,11 +35,19 @@ namespace container_internal {
 constexpr int HashtablezInfo::kMaxStackDepth;
 
 namespace {
+#if !defined(ESP8266)
 ABSL_CONST_INIT std::atomic<bool> g_hashtablez_enabled{
     false
 };
 ABSL_CONST_INIT std::atomic<int32_t> g_hashtablez_sample_parameter{1 << 10};
 ABSL_CONST_INIT std::atomic<int32_t> g_hashtablez_max_samples{1 << 20};
+#else
+ABSL_CONST_INIT bool g_hashtablez_enabled{
+    false
+};
+ABSL_CONST_INIT int32_t g_hashtablez_sample_parameter{1 << 10};
+ABSL_CONST_INIT int32_t g_hashtablez_max_samples{1 << 20};
+#endif
 
 // Returns the next pseudo-random value.
 // pRNG is: aX+b mod c with a = 0x5DEECE66D, b =  0xB, c = 1<<48
@@ -75,9 +86,17 @@ int64_t GetGeometricVariable(int64_t mean) {
         // NextRandom() a bunch to mush the bits around.  We use a global_rand
         // to handle the case where the same thread (by memory address) gets
         // created and destroyed repeatedly.
+        #if !defined(ESP8266)
         ABSL_CONST_INIT static std::atomic<uint32_t> global_rand(0);
+        #else
+        ABSL_CONST_INIT static uint32_t global_rand = 0;
+        #endif
         uint64_t r = reinterpret_cast<uint64_t>(&rng) +
+                   #if !defined(ESP8266)
                    global_rand.fetch_add(1, std::memory_order_relaxed);
+                   #else
+                   ++global_rand;
+                   #endif
         for (int i = 0; i < 20; ++i) {
           r = NextRandom(r);
         }
@@ -119,13 +138,20 @@ HashtablezSampler& HashtablezSampler::Global() {
 
 HashtablezSampler::DisposeCallback HashtablezSampler::SetDisposeCallback(
     DisposeCallback f) {
+  #if !defined(ESP8266)
   return dispose_.exchange(f, std::memory_order_relaxed);
+  #else
+  auto oldValue = dispose_;
+  dispose_ = f;
+  return oldValue;
+  #endif
 }
 
 HashtablezInfo::HashtablezInfo() { PrepareForSampling(); }
 HashtablezInfo::~HashtablezInfo() = default;
 
 void HashtablezInfo::PrepareForSampling() {
+  #if !defined(ESP8266)
   capacity.store(0, std::memory_order_relaxed);
   size.store(0, std::memory_order_relaxed);
   num_erases.store(0, std::memory_order_relaxed);
@@ -133,24 +159,41 @@ void HashtablezInfo::PrepareForSampling() {
   total_probe_length.store(0, std::memory_order_relaxed);
   hashes_bitwise_or.store(0, std::memory_order_relaxed);
   hashes_bitwise_and.store(~size_t{}, std::memory_order_relaxed);
+  #else
+  capacity = 0;
+  size = 0;
+  num_erases = 0;
+  max_probe_length = 0;
+  total_probe_length = 0;
+  hashes_bitwise_or = 0;
+  hashes_bitwise_and  = ~size_t{};
+  #endif
 
   create_time = absl::Now();
   // The inliner makes hardcoded skip_count difficult (especially when combined
   // with LTO).  We use the ability to exclude stacks by regex when encoding
   // instead.
+  #if !defined(ESP8266)
   depth = absl::GetStackTrace(stack, HashtablezInfo::kMaxStackDepth,
                               /* skip_count= */ 0);
+  #endif
   dead = nullptr;
 }
 
 HashtablezSampler::HashtablezSampler()
     : dropped_samples_(0), size_estimate_(0), all_(nullptr), dispose_(nullptr) {
+  #if !defined(ESP8266)
   absl::MutexLock l(&graveyard_.init_mu);
+  #endif
   graveyard_.dead = &graveyard_;
 }
 
 HashtablezSampler::~HashtablezSampler() {
+  #if !defined(ESP8266)
   HashtablezInfo* s = all_.load(std::memory_order_acquire);
+  #else
+  HashtablezInfo* s = all_;
+  #endif
   while (s != nullptr) {
     HashtablezInfo* next = s->next;
     delete s;
@@ -159,26 +202,39 @@ HashtablezSampler::~HashtablezSampler() {
 }
 
 void HashtablezSampler::PushNew(HashtablezInfo* sample) {
+  #if !defined(ESP8266)
   sample->next = all_.load(std::memory_order_relaxed);
   while (!all_.compare_exchange_weak(sample->next, sample,
                                      std::memory_order_release,
                                      std::memory_order_relaxed)) {
   }
+  #else
+  sample->next = all_;
+  all_ = sample;
+  #endif
 }
 
 void HashtablezSampler::PushDead(HashtablezInfo* sample) {
+  #if !defined(ESP8266)
   if (auto* dispose = dispose_.load(std::memory_order_relaxed)) {
+  #else
+  if (auto* dispose = dispose_) {
+  #endif
     dispose(*sample);
   }
 
+  #if !defined(ESP8266)
   absl::MutexLock graveyard_lock(&graveyard_.init_mu);
   absl::MutexLock sample_lock(&sample->init_mu);
+  #endif
   sample->dead = graveyard_.dead;
   graveyard_.dead = sample;
 }
 
 HashtablezInfo* HashtablezSampler::PopDead() {
+  #if !defined(ESP8266)
   absl::MutexLock graveyard_lock(&graveyard_.init_mu);
+  #endif
 
   // The list is circular, so eventually it collapses down to
   //   graveyard_.dead == &graveyard_
@@ -186,17 +242,26 @@ HashtablezInfo* HashtablezSampler::PopDead() {
   HashtablezInfo* sample = graveyard_.dead;
   if (sample == &graveyard_) return nullptr;
 
+  #if !defined(ESP8266)
   absl::MutexLock sample_lock(&sample->init_mu);
+  #endif
   graveyard_.dead = sample->dead;
   sample->PrepareForSampling();
   return sample;
 }
 
 HashtablezInfo* HashtablezSampler::Register() {
+  #if !defined(ESP8266)
   int64_t size = size_estimate_.fetch_add(1, std::memory_order_relaxed);
   if (size > g_hashtablez_max_samples.load(std::memory_order_relaxed)) {
     size_estimate_.fetch_sub(1, std::memory_order_relaxed);
     dropped_samples_.fetch_add(1, std::memory_order_relaxed);
+  #else
+    int64_t size = size_estimate_ + 1;
+    if (size > g_hashtablez_max_samples) {
+      size_estimate_--;
+      dropped_samples_++;
+  #endif
     return nullptr;
   }
 
@@ -212,21 +277,35 @@ HashtablezInfo* HashtablezSampler::Register() {
 
 void HashtablezSampler::Unregister(HashtablezInfo* sample) {
   PushDead(sample);
+  #if !defined(ESP8266)
   size_estimate_.fetch_sub(1, std::memory_order_relaxed);
+  #else
+  size_estimate_--;
+  #endif
 }
 
 int64_t HashtablezSampler::Iterate(
     const std::function<void(const HashtablezInfo& stack)>& f) {
+  #if !defined(ESP8266)
   HashtablezInfo* s = all_.load(std::memory_order_acquire);
+  #else
+  HashtablezInfo* s = all_;
+  #endif
   while (s != nullptr) {
+    #if !defined(ESP8266)
     absl::MutexLock l(&s->init_mu);
+    #endif
     if (s->dead == nullptr) {
       f(*s);
     }
     s = s->next;
   }
 
+  #if !defined(ESP8266)  
   return dropped_samples_.load(std::memory_order_relaxed);
+  #else
+  return dropped_samples_;
+  #endif
 }
 
 HashtablezInfo* SampleSlow(int64_t* next_sample) {
@@ -237,12 +316,20 @@ HashtablezInfo* SampleSlow(int64_t* next_sample) {
 
   bool first = *next_sample < 0;
   *next_sample = GetGeometricVariable(
+      #if !defined(ESP8266)    
       g_hashtablez_sample_parameter.load(std::memory_order_relaxed));
+      #else
+      g_hashtablez_sample_parameter);
+      #endif
 
   // g_hashtablez_enabled can be dynamically flipped, we need to set a threshold
   // low enough that we will start sampling in a reasonable time, so we just use
   // the default sampling rate.
+  #if !defined(ESP8266) 
   if (!g_hashtablez_enabled.load(std::memory_order_relaxed)) return nullptr;
+  #else
+  if (!g_hashtablez_enabled);
+  #endif
 
   // We will only be negative on our first count, so we should just retry in
   // that case.
@@ -273,6 +360,7 @@ void RecordInsertSlow(HashtablezInfo* info, size_t hash,
   probe_length /= 8;
 #endif
 
+  #if !defined(ESP8266)
   info->hashes_bitwise_and.fetch_and(hash, std::memory_order_relaxed);
   info->hashes_bitwise_or.fetch_or(hash, std::memory_order_relaxed);
   info->max_probe_length.store(
@@ -281,15 +369,30 @@ void RecordInsertSlow(HashtablezInfo* info, size_t hash,
       std::memory_order_relaxed);
   info->total_probe_length.fetch_add(probe_length, std::memory_order_relaxed);
   info->size.fetch_add(1, std::memory_order_relaxed);
+  #else
+  info->hashes_bitwise_and &= hash;
+  info->hashes_bitwise_or |= hash;
+  info->max_probe_length = std::max(info->max_probe_length, probe_length);
+  info->total_probe_length += probe_length;
+  info->size++;
+  #endif
 }
 
 void SetHashtablezEnabled(bool enabled) {
+  #if !defined(ESP8266)
   g_hashtablez_enabled.store(enabled, std::memory_order_release);
+  #else
+  g_hashtablez_enabled = enabled;
+  #endif
 }
 
 void SetHashtablezSampleParameter(int32_t rate) {
   if (rate > 0) {
+    #if !defined(ESP8266)
     g_hashtablez_sample_parameter.store(rate, std::memory_order_release);
+    #else
+    g_hashtablez_sample_parameter = rate;
+    #endif
   } else {
     ABSL_RAW_LOG(ERROR, "Invalid hashtablez sample rate: %lld",
                  static_cast<long long>(rate));  // NOLINT(runtime/int)
@@ -298,7 +401,11 @@ void SetHashtablezSampleParameter(int32_t rate) {
 
 void SetHashtablezMaxSamples(int32_t max) {
   if (max > 0) {
+    #if !defined(ESP8266)
     g_hashtablez_max_samples.store(max, std::memory_order_release);
+    #else
+    g_hashtablez_max_samples = max;
+    #endif
   } else {
     ABSL_RAW_LOG(ERROR, "Invalid hashtablez max samples: %lld",
                  static_cast<long long>(max));  // NOLINT(runtime/int)

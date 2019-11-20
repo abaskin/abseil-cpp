@@ -64,7 +64,7 @@ static int num_cpus = 0;
 static double nominal_cpu_frequency = 1.0;  // 0.0 might be dangerous.
 
 static int GetNumCPUs() {
-#if defined(__myriad2__)
+#if defined(__myriad2__) || defined(ESP8266)
   return 1;
 #else
   // Other possibilities:
@@ -321,6 +321,12 @@ pid_t GetTID() {
   uint32_t tid;
   rtems_task_ident(RTEMS_SELF, 0, &tid);
   return tid;
+}
+
+#elif defined(ESP8266)
+
+pid_t GetTID() {
+  return 1;
 }
 
 #else

@@ -1,0 +1,49 @@
+{
+  "name": "abseil-cpp",
+  "description": "Abseil is an open-source collection of C++ code (compliant to C++11) designed to augment the C++ standard library.",
+  "keywords": "",
+  "authors": {
+    "name": "Abseil Team",
+    "url": "https://abseil.io",
+    "maintainer": true
+  },
+  "version": "0.7.0",
+  "framework": "arduino",
+  "platforms": "*",
+  "build": {
+    "libArchive": false
+  },
+  "build": {
+    "srcDir": "absl",
+    "srcFilter": [
+      "+<base/>",
+      "+<strings/>",
+      "+<algorithm/>",
+      "+<copts/>",
+      "+<functional/>",
+      "+<hash/>",
+      "+<memory/>",
+      "+<meta/>",
+      "+<numeric/>",
+      "+<random/>",
+      "+<types/>",
+      "+<utility/>",
+      "+<time/>",
+      "+<container/>",
+      
+      "-<debugging/>",
+      "-<synchronization/>",
+      "-<flags/>",
+      "-<test/>",
+      "-<benchmark/>"
+    ],
+    "includeDir": "",
+    "flags": 
+    [
+      "-D ABSL_FORCE_THREAD_IDENTITY_MODE=2",
+      "-D _GLIBCXX_EXPORT_TEMPLATE",
+      "-D __TM_GMTOFF=tm_gmtoff",
+      "-D __TM_ZONE=tm_zone"
+    ]
+  }
+}

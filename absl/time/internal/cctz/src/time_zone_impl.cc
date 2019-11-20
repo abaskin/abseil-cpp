@@ -33,8 +33,10 @@ using TimeZoneImplByName =
     std::unordered_map<std::string, const time_zone::Impl*>;
 TimeZoneImplByName* time_zone_map = nullptr;
 
+#if !defined(ESP8266)
 // Mutual exclusion for time_zone_map.
 std::mutex time_zone_mutex;
+#endif
 
 }  // namespace
 
@@ -55,7 +57,9 @@ bool time_zone::Impl::LoadTimeZone(const std::string& name, time_zone* tz) {
   // Then check, under a shared lock, whether the time zone has already
   // been loaded. This is the common path. TODO: Move to shared_mutex.
   {
+    #if !defined(ESP8266)
     std::lock_guard<std::mutex> lock(time_zone_mutex);
+    #endif
     if (time_zone_map != nullptr) {
       TimeZoneImplByName::const_iterator itr = time_zone_map->find(name);
       if (itr != time_zone_map->end()) {
@@ -66,7 +70,9 @@ bool time_zone::Impl::LoadTimeZone(const std::string& name, time_zone* tz) {
   }
 
   // Now check again, under an exclusive lock.
+  #if !defined(ESP8266)
   std::lock_guard<std::mutex> lock(time_zone_mutex);
+  #endif
   if (time_zone_map == nullptr) time_zone_map = new TimeZoneImplByName;
   const Impl*& impl = (*time_zone_map)[name];
   if (impl == nullptr) {
@@ -85,7 +91,9 @@ bool time_zone::Impl::LoadTimeZone(const std::string& name, time_zone* tz) {
 }
 
 void time_zone::Impl::ClearTimeZoneMapTestOnly() {
+  #if !defined(ESP8266)
   std::lock_guard<std::mutex> lock(time_zone_mutex);
+  #endif
   if (time_zone_map != nullptr) {
     // Existing time_zone::Impl* entries are in the wild, so we simply
     // leak them.  Future requests will result in reloading the data.

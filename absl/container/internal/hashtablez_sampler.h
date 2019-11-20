@@ -47,8 +47,12 @@
 #include "absl/base/internal/per_thread_tls.h"
 #include "absl/base/optimization.h"
 #include "absl/container/internal/have_sse.h"
-#include "absl/synchronization/mutex.h"
 #include "absl/utility/utility.h"
+#include "absl/time/time.h"
+
+#if !defined(ESP8266)
+#include "absl/synchronization/mutex.h"
+#endif
 
 namespace absl {
 inline namespace lts_2019_08_08 {
@@ -66,10 +70,16 @@ struct HashtablezInfo {
 
   // Puts the object into a clean state, fills in the logically `const` members,
   // blocking for any readers that are currently sampling the object.
-  void PrepareForSampling() EXCLUSIVE_LOCKS_REQUIRED(init_mu);
+  void PrepareForSampling()
+  #if !defined(ESP8266)
+  EXCLUSIVE_LOCKS_REQUIRED(init_mu);
+  #else
+  ;
+  #endif
 
   // These fields are mutated by the various Record* APIs and need to be
   // thread-safe.
+  #if !defined(ESP8266)
   std::atomic<size_t> capacity;
   std::atomic<size_t> size;
   std::atomic<size_t> num_erases;
@@ -77,14 +87,28 @@ struct HashtablezInfo {
   std::atomic<size_t> total_probe_length;
   std::atomic<size_t> hashes_bitwise_or;
   std::atomic<size_t> hashes_bitwise_and;
+  #else
+  size_t capacity;
+  size_t size;
+  size_t num_erases;
+  size_t max_probe_length;
+  size_t total_probe_length;
+  size_t hashes_bitwise_or;
+  size_t hashes_bitwise_and;
+  #endif
 
   // `HashtablezSampler` maintains intrusive linked lists for all samples.  See
   // comments on `HashtablezSampler::all_` for details on these.  `init_mu`
   // guards the ability to restore the sample to a pristine state.  This
   // prevents races with sampling and resurrecting an object.
-  absl::Mutex init_mu;
   HashtablezInfo* next;
+
+  #if !defined(ESP8266)
+  absl::Mutex init_mu;
   HashtablezInfo* dead GUARDED_BY(init_mu);
+  #else
+  HashtablezInfo* dead;
+  #endif
 
   // All of the fields below are set by `PrepareForSampling`, they must not be
   // mutated in `Record*` functions.  They are logically `const` in that sense.
@@ -103,14 +127,25 @@ inline void RecordRehashSlow(HashtablezInfo* info, size_t total_probe_length) {
 #else
   total_probe_length /= 8;
 #endif
-  info->total_probe_length.store(total_probe_length, std::memory_order_relaxed);
-  info->num_erases.store(0, std::memory_order_relaxed);
+
+#if !defined(ESP8266)
+info->total_probe_length.store(total_probe_length, std::memory_order_relaxed);
+info->num_erases.store(0, std::memory_order_relaxed);
+#else
+info->total_probe_length = total_probe_length;
+info->num_erases = 0;
+#endif
 }
 
 inline void RecordStorageChangedSlow(HashtablezInfo* info, size_t size,
                                      size_t capacity) {
+  #if !defined(ESP8266)
   info->size.store(size, std::memory_order_relaxed);
   info->capacity.store(capacity, std::memory_order_relaxed);
+  #else
+  info->size = size;
+  info->capacity = capacity;
+  #endif
   if (size == 0) {
     // This is a clear, reset the total/num_erases too.
     RecordRehashSlow(info, 0);
@@ -121,8 +156,13 @@ void RecordInsertSlow(HashtablezInfo* info, size_t hash,
                       size_t distance_from_desired);
 
 inline void RecordEraseSlow(HashtablezInfo* info) {
+  #if !defined(ESP8266)
   info->size.fetch_sub(1, std::memory_order_relaxed);
   info->num_erases.fetch_add(1, std::memory_order_relaxed);
+  #else
+  info->size--;
+  info->num_erases++;
+  #endif
 }
 
 HashtablezInfo* SampleSlow(int64_t* next_sample);
@@ -233,8 +273,13 @@ class HashtablezSampler {
   void PushDead(HashtablezInfo* sample);
   HashtablezInfo* PopDead();
 
+  #if !defined(ESP8266)
   std::atomic<size_t> dropped_samples_;
   std::atomic<size_t> size_estimate_;
+  #else
+  size_t dropped_samples_;
+  size_t size_estimate_;
+  #endif
 
   // Intrusive lock free linked lists for tracking samples.
   //
@@ -261,10 +306,15 @@ class HashtablezSampler {
   //     ^                                      |
   //     +--------------------------------------+
   //
+  #if !defined(ESP8266)
   std::atomic<HashtablezInfo*> all_;
-  HashtablezInfo graveyard_;
-
   std::atomic<DisposeCallback> dispose_;
+  #else
+  HashtablezInfo* all_;
+  DisposeCallback dispose_;
+  #endif
+
+  HashtablezInfo graveyard_;
 };
 
 // Enables or disables sampling for Swiss tables.

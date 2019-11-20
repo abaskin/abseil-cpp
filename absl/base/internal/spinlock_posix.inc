@@ -19,6 +19,12 @@
 #include <ctime>
 #include <cerrno>
 
+#if defined(ESP8266)
+#include <time.h>
+#include <Arduino.h>
+extern "C" int nanosleep(const struct timespec  *rqtp, struct timespec *rmtp);
+#endif
+
 #include "absl/base/internal/scheduling_mode.h"
 #include "absl/base/port.h"
 
@@ -30,7 +36,11 @@ ABSL_ATTRIBUTE_WEAK void AbslInternalSpinLockDelay(
   int save_errno = errno;
   if (loop == 0) {
   } else if (loop == 1) {
+    #if !defined(ESP8266)
     sched_yield();
+    #else
+    yield();
+    #endif
   } else {
     struct timespec tm;
     tm.tv_sec = 0;

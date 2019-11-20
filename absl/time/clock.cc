@@ -20,6 +20,11 @@
 #include <windows.h>
 #endif
 
+#if defined(ESP8266)
+#include <time.h>
+extern "C" int nanosleep(const struct timespec  *rqtp, struct timespec *rmtp);
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <cerrno>

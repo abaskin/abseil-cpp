@@ -4,6 +4,11 @@
 #include <ctime>
 #include <cstdint>
 
+#if defined(ESP8266)
+#include <time.h>
+extern "C" int clock_gettime(clockid_t unused, struct timespec *tp);
+#endif
+
 #include "absl/base/internal/raw_logging.h"
 
 namespace absl {
